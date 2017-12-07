@@ -1,5 +1,5 @@
-#!/usr/local/bin/python
-# coding: utf-8
+#!/usr/bin/python3
+#  coding: utf-8
 from bs4 import BeautifulSoup
 import urllib.request
 import urllib.error
@@ -46,13 +46,17 @@ def items_sort_by_date(items):
 
 
 def items_parse(html):
-    soup = BeautifulSoup(html, 'html.parser')
+
+    soup = BeautifulSoup(html, 'html.pars    discarded = re.compile(r'(prisjakt|pp_item|listing_carousel)')
+    accepted = re.compile(r'^item_\d+$')
+er')
     rows = soup.body.find_all('div', class_='item_row')
     item_list = []
     items_parsed = 0
     items_total = 0
+
     for row in rows:
-        if 'prisjakt' not in row.attrs['id'] and 'pp_item' not in row.attrs['id']:
+        if not discarded.match(row.attrs['id']) and accepted.match(row.attrs['id']):
             items_total += 1
             try:
                 has_image = 'item_row_no_image' not in row.attrs['class']
@@ -72,7 +76,7 @@ def items_parse(html):
                     item['price'] = int(re.findall(r'\d+', ''.join(item['price'].split()))[0])
                 except IndexError:
                     parse_logger.debug('unknown price format: {0}'.format(item['price']))
-                    item['price'] = 'n/a'
+                    item['price'] = None
 
                 parse_logger.debug('parsed:\n{}\n{}\n\n'.format('-'*70, row.prettify()))
                 item_list.append(item)
@@ -107,8 +111,8 @@ def items_parse(html):
 
 
 def item_to_str(item):
-    return '{0} - {1} {2: >10} {3: <45} {4}'.format(
-        item['id'], item['date'].strftime("%Y-%m-%d %H:%M"), item['price'], item['description'], item['tori_url'])
+    return '{0} - {1} {2: >30} {3: >10} {4: <45} {5}'.format(
+        item['id'], item['date'].strftime("%Y-%m-%d %H:%M"), item['location'], str(item['price']), item['description'], item['tori_url'])
 
 
 def items_print(items):
@@ -124,31 +128,76 @@ def items_keep_n_newest(items, n):
     return items
 
 
-def items_check_for_alarm(items_to_check):
-    alarms = database.get_alarms()
+def items_check_for_alarm(items_to_check, alarms, testmode):
     alarms_sent = {}
+    use_regex = True
+
+    if use_regex:
+        for alarm in alarms:
+            if 'SearchPattern' in alarm and alarm['SearchPattern']:
+                alarm['RegexSearchPattern'] = re.compile(alarm['SearchPattern'], re.IGNORECASE)
+            if 'Location' in alarm and alarm['Location']:
+                alarm['RegexLocation'] = re.compile(alarm['Location'], re.IGNORECASE)
+
+    alarm_logger.debug('alarms: {}'.format(alarms))
     for item in items_to_check:
         for alarm in alarms:
-            send_alarm = True
-            if 'SearchPattern' in alarm and alarm['SearchPattern'].lower() not in item['description'].lower():
-                send_alarm = False
-            if isinstance(item['price'], int):
-                if 'MaxPrice' in alarm and alarm['MaxPrice'] < item['price']:
-                    send_alarm = False
-                if 'MinPrice' in alarm and alarm['MinPrice'] > item['price']:
-                    send_alarm = False
-            if send_alarm:
+            description_ok = False if 'SearchPattern' in alarm and alarm['SearchPattern'] else True
+            location_ok = False if 'Location' in alarm and alarm['Location'] else True
+            maxprice_ok = False if 'MaxPrice' in alarm and alarm['MaxPrice'] else True
+            minprice_ok = False if 'MinPrice' in alarm and alarm['MinPrice'] else True
+
+            if 'SearchPattern' in alarm and alarm['SearchPattern']:
+                if use_regex:
+                    if alarm['RegexSearchPattern'].match(item['description']):
+                        description_ok = True
+                elif alarm['SearchPattern'].lower() in item['description'].lower():
+                    description_ok = True
+
+            if description_ok and 'Location' in alarm and alarm['Location']:
+                if use_regex:
+                    if alarm['RegexLocation'].match(item['location']):
+                        location_ok = True
+                elif alarm['Location'].lower() in item['location'].lower():
+                    location_ok = True
+
+            if description_ok and location_ok and isinstance(item['price'], int):
+                if 'MaxPrice' in alarm and alarm['MaxPrice'] and item['price'] < alarm['MaxPrice']:
+                    maxprice_ok = True
+                if 'MinPrice' in alarm and alarm['MinPrice'] and item['price'] > alarm['MinPrice']:
+                    minprice_ok = True
+
+            alarm_logger.debug('description {0: <20} {1: <20} item value {2: <20}'.format(
+                alarm['SearchPattern'] if alarm['SearchPattern'] else 'None',
+                'passed' if description_ok else 'failed',
+                item['description']))
+            alarm_logger.debug('location    {0: <20} {1: <20} item value {2: <20}'.format(
+                alarm['Location'] if alarm['Location'] else 'None',
+                'passed' if location_ok else 'failed',
+                item['location']))
+            alarm_logger.debug('maxprice    {0: <20} {1: <20} item value {2: <20}'.format(
+                alarm['MaxPrice'] if alarm['MaxPrice'] else 'None',
+                'passed' if maxprice_ok else 'failed',
+                item['price'] if item['price'] else 'None'))
+            alarm_logger.debug('minprice    {0: <20} {1: <20} item value {2: <20}'.format(
+                alarm['MinPrice'] if alarm['MinPrice'] else 'None',
+                'passed' if maxprice_ok else 'failed',
+                item['price'] if item['price'] else 'None'))
+
+            if all([description_ok, location_ok, maxprice_ok, minprice_ok]):
                 if item['id'] not in alarms_sent or (item['id'] in alarms_sent and alarm['UserId'] not in alarms_sent[item['id']]):
-                    email = database.get_email(alarm['UserId'])
-                    alarm_logger.info('alarm {} for "{}, {} eur"'.format(email, item['description'], item['price']))
-                    gmail.send(email, 'Tori.fi: {}, {}'.format(item['description'], item['price']), item['tori_url'], None)
-                    database.store_item_alarm(alarm['UserId'], item)
+                    if not testmode:
+                        email = database.get_email(alarm['UserId'])
+                        alarm_logger.info('alarm {} for "{}, {} eur"'.format(email, item['description'], item['price']))
+                        gmail.send(email, 'Tori.fi: {}, {}'.format(item['description'], item['price']), item['tori_url'], None)
+                        database.store_item_alarm(alarm['UserId'], item)
+                    else:
+                        alarm_logger.info('alarm found "{}, {} eur"'.format(item['description'], item['price']))
                     alarms_sent.setdefault(item['id'], []).append(alarm['UserId'])
                 else:
                     alarm_logger.info('alarm already sent to UserId {} for "{}, {} eur"'.format(alarm['UserId'], item['description'], item['price']))
 
-
-if __name__ == '__main__':
+def run():
     filter_logger.info('start tori.fi monitoring')
 
     page_num = 1
@@ -170,7 +219,7 @@ if __name__ == '__main__':
             # process new items
             new_items_all = items_sort_by_date(new_items_all)
             items_print(new_items_all)
-            items_check_for_alarm(new_items_all)
+            items_check_for_alarm(new_items_all, database.get_alarms(), False)
 
             # truncate old items, and wait until next inspection round
             old_items = items_keep_n_newest(old_items, NUM_KEEP_ITEMS)
@@ -184,4 +233,32 @@ if __name__ == '__main__':
             new_items_all = []
         else:
             page_num += 1
-            time.sleep(random.uniform(0.5, 1.5))
+            time.sleep(random.uniform(0.5, 1.0))
+
+def test():
+    filter_logger.info('start test mode')
+
+    logging.getLogger().setLevel(logging.DEBUG)
+
+    test_alarms = [{'AlarmId': 1,
+                    'SearchPattern': 'sivuverho',
+                    'MaxPrice': 500,
+                    'MinPrice': None,
+                    'UserId': 1,
+                    'Location': 'Pohjois-savo'}]
+    test_items = [{'id': 42464586,
+                   'description': 'Sivuverhot',
+                   'location': 'Pohjois-Savo',
+                   'buy_or_sell': 'Myydään',
+                   'price': 50,
+                   'date': datetime.datetime(2017, 12, 2, 22, 46),
+                   'image_url': 'https://d38a5rkle4vfil.cloudfront.net/image/lithumbs/02/0282065103.jpg',
+                   'tori_url': 'https://www.tori.fi/pohjois-savo/Sivuverhot_42464586.htm',
+                   'category': 'Sisustus ja huonekalut'}]
+
+    items_check_for_alarm(test_items, test_alarms, True)
+
+
+if __name__ == '__main__':
+    run()
+    #test()

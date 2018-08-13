@@ -8,6 +8,7 @@ import inspect
 import logging
 import logging.handlers
 import stat
+from pathlib import Path
 
 conf_logger = logging.getLogger('Config')
 
@@ -37,9 +38,15 @@ class LoggerWriter:
         for line in buf.rstrip().splitlines():
             self.logger.log(self.log_level, line.rstrip())
 
+    def flush(self):
+        pass
 
-def setup_logging():
-    log_file = os.path.join(__location__, 'log.txt')
+
+def setup_logging(log_subdir):
+    log_file = Path(__location__, log_subdir, 'log.txt')
+    if not log_file.parents[0].exists():
+        log_file.parents[0].mkdir()
+
     numeric_level = getattr(logging, loglevel.upper(), logging.DEBUG)
 
     fmt = logging.Formatter('%(asctime)s %(name)8s: %(message)s', datefmt="%Y-%m-%d %H:%M:%S")
@@ -66,14 +73,18 @@ def setup_logging():
 config = configparser.RawConfigParser()
 config.read(os.path.join(__location__, 'config.ini'))
 
-gmail_user = config.get('EMAIL', 'gmail_user')
-gmail_pass = config.get('EMAIL', 'gmail_pass')
+try:
+    gmail_user = config.get('EMAIL', 'gmail_user')
+    gmail_pass = config.get('EMAIL', 'gmail_pass')
+except (configparser.NoOptionError, configparser.NoSectionError):
+    pass
 
 db_user = config.get('DATABASE', 'db_user')
 db_pass = config.get('DATABASE', 'db_pass')
 db_host = config.get('DATABASE', 'db_host')
+db_name = config.get('DATABASE', 'db_name')
 
 loglevel = config.get('COMMON', 'loglevel')
 
-setup_logging()
+setup_logging('logs')
 

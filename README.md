@@ -3,9 +3,8 @@ Fetches Tori classifieds and automatically sends alarms
 
 Prequisites:
 
-- database ToriScraper
-   * tables Alarm, ItemAlarm and User
-- gmail account
+- sql database
+- gmail account (optional)
    * use simple authentication
    
-Rename template_config.ini to config.ini and add credentials.
+Rename template_config.ini to config.ini and populate fields.

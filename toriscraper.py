@@ -36,9 +36,9 @@ def fetch_tori_data(page):
             duration_ms = (end - start).total_seconds()
             fetch_logger.info('{0} - {1:.1f} KB, took {2:.2g} s'.format(url_to_search, len(page_data) / 1000, duration_ms))
             return page_data
-    except urllib.error.UrlError:
+    except urllib.error.URLError:
         parse_logger.error('failed to fetch: {}'.format(page))
-        return ''
+        return None
 
 
 def items_sort_by_date(items):
@@ -46,10 +46,12 @@ def items_sort_by_date(items):
 
 
 def items_parse(html):
-
-    soup = BeautifulSoup(html, 'html.pars    discarded = re.compile(r'(prisjakt|pp_item|listing_carousel)')
+    if not html:
+        return []
+    soup = BeautifulSoup(html, 'html.parser')
+    discarded = re.compile(r'(prisjakt|pp_item|listing_carousel)')
     accepted = re.compile(r'^item_\d+$')
-er')
+
     rows = soup.body.find_all('div', class_='item_row')
     item_list = []
     items_parsed = 0
@@ -130,14 +132,12 @@ def items_keep_n_newest(items, n):
 
 def items_check_for_alarm(items_to_check, alarms, testmode):
     alarms_sent = {}
-    use_regex = True
 
-    if use_regex:
-        for alarm in alarms:
-            if 'SearchPattern' in alarm and alarm['SearchPattern']:
-                alarm['RegexSearchPattern'] = re.compile(alarm['SearchPattern'], re.IGNORECASE)
-            if 'Location' in alarm and alarm['Location']:
-                alarm['RegexLocation'] = re.compile(alarm['Location'], re.IGNORECASE)
+    for alarm in alarms:
+        if 'SearchPattern' in alarm and alarm['SearchPattern']:
+            alarm['RegexSearchPattern'] = re.compile(alarm['SearchPattern'], re.IGNORECASE)
+        if 'Location' in alarm and alarm['Location']:
+            alarm['RegexLocation'] = re.compile(alarm['Location'], re.IGNORECASE)
 
     alarm_logger.debug('alarms: {}'.format(alarms))
     for item in items_to_check:
@@ -148,17 +148,11 @@ def items_check_for_alarm(items_to_check, alarms, testmode):
             minprice_ok = False if 'MinPrice' in alarm and alarm['MinPrice'] else True
 
             if 'SearchPattern' in alarm and alarm['SearchPattern']:
-                if use_regex:
-                    if alarm['RegexSearchPattern'].match(item['description']):
-                        description_ok = True
-                elif alarm['SearchPattern'].lower() in item['description'].lower():
+                if alarm['RegexSearchPattern'].match(item['description']):
                     description_ok = True
 
             if description_ok and 'Location' in alarm and alarm['Location']:
-                if use_regex:
-                    if alarm['RegexLocation'].match(item['location']):
-                        location_ok = True
-                elif alarm['Location'].lower() in item['location'].lower():
+                if alarm['RegexLocation'].match(item['location']):
                     location_ok = True
 
             if description_ok and location_ok and isinstance(item['price'], int):
@@ -200,40 +194,46 @@ def items_check_for_alarm(items_to_check, alarms, testmode):
 def run():
     filter_logger.info('start tori.fi monitoring')
 
+    database.create_if_needed()
+
     page_num = 1
     old_items = []
-    new_items_all = []
+    new_items = []
 
     while True:
         items = items_parse(fetch_tori_data(page_num))
 
-        old_item_ids = [item['id'] for item in old_items]
-        new_items_query = [item for item in items if item['id'] not in old_item_ids]
-        old_items += new_items_query
-        new_items_all += new_items_query
-        old_items = items_sort_by_date(old_items)
+        if items:
+            old_item_ids = [item['id'] for item in old_items]
+            new_items_query = [item for item in items if item['id'] not in old_item_ids]
+            old_items += new_items_query
+            new_items += new_items_query
+            old_items = items_sort_by_date(old_items)
+            filter_logger.debug('query new items {}/{}'.format(len(new_items_query), len(items)))
+           
+            if not len(new_items_query) or page_num > NUM_PAGES_TO_SEARCH:
+                # process new items
+                new_items = items_sort_by_date(new_items)
+                items_print(new_items)
+                items_check_for_alarm(new_items, database.get_alarms(), False)
+                database.store_items(new_items)
 
-        filter_logger.debug('query new items {}/{}'.format(len(new_items_query), len(items)))
-
-        if not len(new_items_query) or page_num > NUM_PAGES_TO_SEARCH:
-            # process new items
-            new_items_all = items_sort_by_date(new_items_all)
-            items_print(new_items_all)
-            items_check_for_alarm(new_items_all, database.get_alarms(), False)
-
-            # truncate old items, and wait until next inspection round
-            old_items = items_keep_n_newest(old_items, NUM_KEEP_ITEMS)
-            wait_time = 60 + random.randint(1, 60)
-            filter_logger.info('{} new items, total item count {}/{}, timerange {} - {}. now waiting for {} s'.format(
-                len(new_items_all), len(old_items), NUM_KEEP_ITEMS, old_items[0]['date'], old_items[-1]['date'], wait_time))
-            if len(new_items_query) and page_num > NUM_PAGES_TO_SEARCH:
-                filter_logger.info('max page search count reached!')
-            time.sleep(wait_time)
-            page_num = 1
-            new_items_all = []
+                # truncate old items, and wait until next inspection round
+                old_items = items_keep_n_newest(old_items, NUM_KEEP_ITEMS)
+                wait_time = 60 + random.randint(1, 60)
+                filter_logger.info('{} new items, total item count {}/{}, timerange {} - {}. now waiting for {} s'.format(
+                    len(new_items), len(old_items), NUM_KEEP_ITEMS, old_items[0]['date'], old_items[-1]['date'], wait_time))
+                if len(new_items_query) and page_num > NUM_PAGES_TO_SEARCH:
+                    filter_logger.info('max page search count reached!')
+                time.sleep(wait_time)
+                page_num = 1
+                new_items = []
+            else:
+                page_num += 1
+                #time.sleep(random.uniform(0.5, 1.0))
         else:
-            page_num += 1
-            time.sleep(random.uniform(0.5, 1.0))
+            filter_logger.warning('zero items found. waiting 5 mins')
+            time.sleep(5*60)
 
 def test():
     filter_logger.info('start test mode')

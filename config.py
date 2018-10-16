@@ -79,6 +79,7 @@ try:
 except (configparser.NoOptionError, configparser.NoSectionError):
     pass
 
+db_conn = config.get('DATABASE', 'db_conn')
 db_user = config.get('DATABASE', 'db_user')
 db_pass = config.get('DATABASE', 'db_pass')
 db_host = config.get('DATABASE', 'db_host')

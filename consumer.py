@@ -23,7 +23,7 @@ class ToriParser:
     def _category_parser(self, soup):
         return soup.find('a')['title'].split(':')[1].strip()
 
-    def list_factory(self, *args, **kwargs):
+    def list_factory(self, *args, **kwargs) -> ToriItemList:
         return ToriItemList(*args, **kwargs)
 
     def parse(self, html) -> ToriItemList:
@@ -66,7 +66,7 @@ class ToriParser:
                     items.add(ToriItem(**item))
                 except (TypeError, AttributeError, ValueError, KeyError) as e:
                     self.logger.error('Unable to parse:\n{}\n{}\n\n'.format('-' * 70, row.prettify()))
-                    self.logger.error('Exception:\n{}'.format(traceback.print_exc()))
+                    self.logger.error('Exception:\n{}'.format(traceback.format_exc()))
         self.logger.debug('successfully parsed {0}/{1}'.format(len(items), items_total))
         return items
 
@@ -85,7 +85,7 @@ class CarParser(ToriParser):
     def _category_parser(self, soup):
         return 'autot'
 
-    def list_factory(self, *args, **kwargs):
+    def list_factory(self, *args, **kwargs) -> CarItemList:
         return CarItemList(*args, **kwargs)
 
     def parse(self, html) -> CarItemList:
@@ -174,5 +174,4 @@ class ToriConsumer:
         html = self._page_reader(page_num)
         items = self.parser.parse(html)
         items.remove_buys()
-        items.sort_by_date()
         return items

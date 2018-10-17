@@ -20,6 +20,7 @@ class DBConnection:
         else:
             self.db = MySQLdb.connect(host=config.db_host, user=config.db_user, passwd=config.db_pass,
                                       cursorclass=MySQLdb.cursors.DictCursor)
+        self.db.set_character_set('utf8')
         return self.db.cursor()
 
     def __exit__(self, type, value, traceback):
@@ -122,17 +123,12 @@ class ToriSQLDB:
 
     def store_cars(self, items):
         with self.db() as cur:
+            items_list = [(i.description, i.price, i.date, i.imageurl, i.toriurl,
+                           i.toriid, i.category, i.location, i.car_ac, i.car_cruise,
+                           i.car_engine_heater, i.car_hook, i.car_fuel_expense, i.car_tax, i.car_year,
+                           i.car_odo, i.car_fuel_type, i.car_gear, i.car_plate, i.car_type,
+                           i.car_description_extra, i.car_info) for i in items]
             try:
-                items_list = []
-                for i in items:
-                    if hasattr(i, 'car_ac'):
-                        items_list.append((i.description, i.price, i.date, i.imageurl, i.toriurl,
-                                       i.toriid, i.category, i.location, i.car_ac, i.car_cruise,
-                                       i.car_engine_heater, i.car_hook, i.car_fuel_expense, i.car_tax, i.car_year,
-                                       i.car_odo, i.car_fuel_type, i.car_gear, i.car_plate, i.car_type,
-                                       i.car_description_extra, i.car_info))
-                    else:
-                        print('invalid!', i)
                 cur.executemany("INSERT INTO Car ("
                                 "Description, Price, Date, ImageURL, ToriURL, "
                                 "ToriId, Category, Location, car_ac, car_cruise, "
@@ -145,7 +141,7 @@ class ToriSQLDB:
                                 "%s, %s, %s, %s, %s, "
                                 "%s, %s, %s, %s, %s, "
                                 "%s, %s)", items_list)
-            except (MySQLdb.IntegrityError, UnicodeEncodeError, Exception):
+            except:
                 self.logger.error(cur._last_executed)
                 self.logger.warning('unable to add entries')
                 self.logger.warning(traceback.format_exc())

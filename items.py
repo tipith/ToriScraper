@@ -86,6 +86,11 @@ class ToriItemList:
             self.item_num += 1
             return item
 
+    def findById(self, id) -> ToriItem:
+        for i in self.items:
+            if i.toriid == id:
+                return i
+
     def add(self, item: ToriItem):
         self.items.append(item)
 
@@ -116,11 +121,11 @@ class ToriItemList:
             self.items = [ToriItem(**x) for x in fetched]
 
     def persist(self):
-        if self.db:
+        if self.db and len(self.items):
             self.db.store_items(self.items)
 
     def check_for_alarms(self):
-        if not self.db:
+        if not self.db or not len(self.items):
             return
         alarms = self.db.get_alarms()
         if not alarms:

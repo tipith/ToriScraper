@@ -8,8 +8,8 @@ import logging
 from consumer import ToriConsumer, CarParser, ToriParser
 from database import DBFactory
 
-NUM_PAGES_TO_SEARCH = 50
-NUM_KEEP_ITEMS = 4000
+NUM_PAGES_TO_SEARCH = 100
+NUM_KEEP_ITEMS = 8000
 
 def get_new_items(_c):
     new_items = _c['consumer'].parser.list_factory('new', db=DBFactory.create())

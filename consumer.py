@@ -38,35 +38,45 @@ class ToriParser:
         items_total = 0
 
         for row in rows:
-            if not discarded.match(row.attrs['id']) and accepted.match(row.attrs['id']):
-                items_total += 1
+            try:
+                if 'id' not in row.attrs:
+                    continue
+
+                if not discarded.match(row.attrs['id']) and accepted.match(row.attrs['id']):
+                    items_total += 1
+
+                has_image = row.find('div', class_='sprite_list_no_image') is None
+                numerals = [int(s) for s in row['id'].split('_') if s.isdigit()]
+                if not numerals:
+                    continue
+                date_raw = row.find('div', class_='date_image').text.strip()
+                date_processed = re.sub(r'[\t]', '', date_raw)
+                date_processed = re.sub(r'[\n]', ' ', date_processed)
+                item = {
+                    'toriid': numerals[0],
+                    'description': row.find('div', class_='desc').a.text,
+                    'price': row.find('p', class_='list_price').text,
+                    'date': date_processed,
+                    'imageurl': row.find('img', class_='item_image')['src'] if has_image else None,
+                    'toriurl': row.find('div', class_='desc').a['href'].split('?')[0]
+                }
+
+                cat_geo = row.find('div', class_='cat_geo')
+                item['location'] = cat_geo.find_all('p')[0].text.strip()
+                item['buy_or_sell'] = cat_geo.find_all('p')[1].text.strip()
+                item['category'] = self._category_parser(cat_geo)
+
                 try:
-                    has_image = 'item_row_no_image' not in row.attrs['class']
-                    item = {
-                        'toriid': int(row['id'].split('_')[1]),
-                        'description': row.find('div', class_='desc').a.text,
-                        'price': row.find('p', class_='list_price').text,
-                        'date': re.sub(r'[\n\t]', '', row.find('div', class_='date_image').text.strip()),
-                        'imageurl': row.find('img', class_='item_image')['src'] if has_image else None,
-                        'toriurl': row.find('div', class_='desc').a['href'].split('?')[0]
-                    }
+                    item['price'] = ToriParser._get_number(item['price'])
+                except IndexError:
+                    self.logger.debug('unknown price format: {0}'.format(item['price']))
+                    item['price'] = None
 
-                    cat_geo = row.find('div', class_='cat_geo')
-                    item['location'] = cat_geo.find_all('p')[0].text.strip()
-                    item['buy_or_sell'] = cat_geo.find_all('p')[1].text.strip()
-                    item['category'] = self._category_parser(cat_geo)
-
-                    try:
-                        item['price'] = ToriParser._get_number(item['price'])
-                    except IndexError:
-                        self.logger.debug('unknown price format: {0}'.format(item['price']))
-                        item['price'] = None
-
-                        self.logger.debug('parsed:\n{}\n{}\n\n'.format('-' * 70, row.prettify()))
-                    items.add(ToriItem(**item))
-                except (TypeError, AttributeError, ValueError, KeyError) as e:
-                    self.logger.error('Unable to parse:\n{}\n{}\n\n'.format('-' * 70, row.prettify()))
-                    self.logger.error('Exception:\n{}'.format(traceback.format_exc()))
+                    self.logger.debug('parsed:\n{}\n{}\n\n'.format('-' * 70, row.prettify()))
+                items.add(ToriItem(**item))
+            except:
+                self.logger.error('Unable to parse:\n{}\n{}\n\n'.format('-' * 70, row.prettify()))
+                self.logger.error('Exception:\n{}'.format(traceback.format_exc()))
         self.logger.debug('successfully parsed {0}/{1}'.format(len(items), items_total))
         return items
 
@@ -92,6 +102,8 @@ class CarParser(ToriParser):
         return CarItemList.create_from_another_list(super().parse(html))
 
     def add_details(self, html, item: ToriItem):
+        if not html:
+            return
         soup = BeautifulSoup(html, 'html.parser')
         det_fin = {}
         for row in soup('td', class_='topic'):
@@ -144,8 +156,12 @@ class ToriConsumer:
 
     def add_details(self, item: ToriItem):
         if self.parser.details_supported:
-            html = self._url_getter(item.toriurl)
-            self.parser.add_details(html, item)
+            try:
+                html = self._url_getter(item.toriurl)
+                self.parser.add_details(html, item)
+            except:
+                self.logger.error('failed to fetch details: {}'.format(item))
+                self.logger.error('Exception:\n{}'.format(traceback.format_exc()))
 
     def _url_getter(self, url):
         start = datetime.datetime.now()
@@ -153,12 +169,11 @@ class ToriConsumer:
         try:
             with urllib.request.urlopen(quoted) as response:
                 page_data = response.read()
-                end = datetime.datetime.now()
-                duration_ms = (end - start).total_seconds()
+                duration_ms = (datetime.datetime.now() - start).total_seconds()
                 self.logger.info(
                     '{0} - {1:.1f} KB, took {2:.2g} s'.format(quoted, len(page_data) / 1000, duration_ms))
                 return page_data
-        except (urllib.error.URLError, UnicodeEncodeError) as e:
+        except:
             self.logger.error('failed to fetch: {}'.format(quoted))
             self.logger.error('Exception:\n{}'.format(traceback.format_exc()))
 

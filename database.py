@@ -93,7 +93,7 @@ class ToriSQLDB:
             end = date.strftime("%Y-%m-%d 23:59:59")
             rows = self._execute("SELECT * FROM Item WHERE Date BETWEEN %s AND %s", (start, end), fetch=True)
         else:
-            rows = self._execute("SELECT * FROM Item ORDER BY ItemId DESC LIMIT 4000", fetch=True)
+            rows = self._execute("SELECT * FROM Item ORDER BY ItemId DESC LIMIT 100000", fetch=True)
         return list(rows)
 
     def get_descriptions(self):
@@ -118,7 +118,7 @@ class ToriSQLDB:
                 self.logger.warning(traceback.format_exc())
 
     def get_cars(self):
-        rows = self._execute('SELECT * FROM Car ORDER BY ItemId DESC LIMIT 4000', fetch=True)
+        rows = self._execute('SELECT * FROM Car ORDER BY ItemId DESC LIMIT 10000', fetch=True)
         return list(rows)
 
     def store_cars(self, items):

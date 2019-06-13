@@ -11,21 +11,17 @@ from database import DBFactory
 NUM_PAGES_TO_SEARCH = 100
 NUM_KEEP_ITEMS = 8000
 
-def get_new_items(_c):
-    new_items = _c['consumer'].parser.list_factory('new', db=DBFactory.create())
-    zero_diff_count = 0
-    for items in _c['consumer']:
-        diff_items = _c['old'].diff_to(items)
-        if zero_diff_count > 5:
-            break
+def get_new_items(fetcher):
+    new_items = fetcher['consumer'].parser.list_factory('new', db=DBFactory.create())
+    for items in fetcher['consumer']:
+        diff_items = fetcher['old'].diff_to(items)
         if len(diff_items) == 0:
-            zero_diff_count += 1
-        _c['old'] += diff_items
+            break
+        fetcher['old'] += diff_items
         new_items += diff_items
     new_items.sort_by_date()
-    for i in new_items:
-        _c['consumer'].add_details(i)
-    _c['old'].truncate_oldest(NUM_KEEP_ITEMS)
+    fetcher['consumer'].enrich(new_items)
+    fetcher['old'].truncate_oldest(NUM_KEEP_ITEMS)
     return new_items
 
 
@@ -52,6 +48,8 @@ def run():
             new_items = get_new_items(c)
             new_items.check_for_alarms()
             new_items.persist()
+            if len(new_items):
+                logger.info(f'\n{new_items}')
             logger.info('topic={}, {}/{} items ({} added), {}'.format(c['consumer'].parser.topic,
                 len(c['old']), NUM_KEEP_ITEMS, len(new_items), _list_to_daterangetext(c['old'])))
         wait_time = 180 + random.randint(1, 60)

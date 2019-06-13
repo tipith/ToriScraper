@@ -1,6 +1,7 @@
 from bs4 import BeautifulSoup
 import urllib.request, urllib.error, urllib.parse
-import re, traceback, logging, datetime
+import re, traceback, logging, datetime, functools
+import multiprocessing.dummy as mp
 
 from items import ToriItemList, CarItemList, ToriItem
 
@@ -9,7 +10,6 @@ class ToriParser:
 
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.details_supported = False
         self.topic = ''
 
     @staticmethod
@@ -89,8 +89,8 @@ class ToriParser:
         self.logger.debug('successfully parsed {0}/{1}'.format(len(items), items_total))
         return items
 
-    def add_details(self, html, item: ToriItem):
-        pass
+    def enrich(self, url_getter, item: ToriItem):
+        return item  # return unmodified
 
 
 class CarParser(ToriParser):
@@ -98,7 +98,6 @@ class CarParser(ToriParser):
     def __init__(self):
         super().__init__()
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.details_supported = True
         self.topic = '/autot'
 
     def list_factory(self, *args, **kwargs) -> CarItemList:
@@ -107,9 +106,10 @@ class CarParser(ToriParser):
     def parse(self, html) -> CarItemList:
         return CarItemList.create_from_another_list(super().parse(html))
 
-    def add_details(self, html, item: ToriItem):
+    def enrich(self, url_getter, item: ToriItem):
+        html = url_getter(item.toriurl, user_msg=str(item.date))
         if not html:
-            return
+            return None
         soup = BeautifulSoup(html, 'html.parser')
         det_fin = {}
         for row in soup('td', class_='topic'):
@@ -137,6 +137,7 @@ class CarParser(ToriParser):
         det['car_info'] = soup('div', class_='body')[0].text.strip('\n').strip()
         det['car_info'] = ' '.join([line.strip() for line in det['car_info'].split('\n')])
         item.add(**det)
+        return item
 
 
 class ToriConsumer:
@@ -144,8 +145,10 @@ class ToriConsumer:
     def __init__(self, parser, max_pages):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.parser = parser
-        self.page_max = max_pages
+        self.pages_max = max_pages
+        self.pages_at_once = max(self.pages_max // 10, 5)
         self.page_num = 0
+        self.p = mp.Pool(20)
 
     def __iter__(self):
         self.page_num = 0
@@ -155,32 +158,37 @@ class ToriConsumer:
         """
         Loops over classifieds pages on tori.fi for given topic
         """
-        if self.page_num > self.page_max:
+        if self.page_num >= self.pages_max:
             raise StopIteration
         else:
-            self.page_num += 1
-            return self._fetch_page(self.page_num)
+            end_page = min(self.pages_max, self.page_num + self.pages_at_once)
+            fetched = self.p.imap_unordered(self._fetch_page, range(self.page_num, end_page))
+            self.page_num = end_page
+            return functools.reduce(lambda x, y : x + y, fetched, self.parser.list_factory('fetch'))
 
-    def add_details(self, item: ToriItem):
-        if self.parser.details_supported:
-            try:
-                html = self._url_getter(item.toriurl)
-                self.parser.add_details(html, item)
-            except KeyboardInterrupt as e:
-                raise e
-            except:
-                self.logger.error('failed to fetch details: {}'.format(item))
-                self.logger.error('Exception:\n{}'.format(traceback.format_exc()))
+    def _add_details(self, item: ToriItem) -> ToriItem:
+        try:
+            return self.parser.enrich(self._url_getter, item)
+        except:
+            self.logger.error('failed to fetch details: {}'.format(item))
+            self.logger.error('Exception:\n{}'.format(traceback.format_exc()))
 
-    def _url_getter(self, url):
+    def enrich(self, items: ToriItemList):
+        try:
+            enriched = self.p.imap_unordered(self._add_details, items)
+            items.replace_items(list(enriched))
+        except KeyboardInterrupt as e:
+            raise e
+
+    def _url_getter(self, url, user_msg=None):
         start = datetime.datetime.now()
         quoted = urllib.parse.quote(url, safe=':/&=?')
         try:
             with urllib.request.urlopen(quoted) as response:
                 page_data = response.read()
-                duration_ms = (datetime.datetime.now() - start).total_seconds()
-                self.logger.info(
-                    '{0} - {1:.1f} KB, took {2:.2g} s'.format(quoted, len(page_data) / 1000, duration_ms))
+                duration = (datetime.datetime.now() - start).total_seconds()
+                user_msg = user_msg + ' -- ' if user_msg else ''
+                self.logger.debug(f'{user_msg}{len(page_data) / 1000:.1f} KB, took {duration:.2f} s -- {quoted}')
                 return page_data
         except KeyboardInterrupt as e:
             raise e

@@ -86,6 +86,9 @@ class ToriItemList:
             self.item_num += 1
             return item
 
+    def replace_items(self, items):
+        self.items = [i for i in items if isinstance(i, ToriItem)]
+
     def findById(self, id) -> ToriItem:
         for i in self.items:
             if i.toriid == id:

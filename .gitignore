@@ -1,0 +1,6 @@
+*.pyc
+logs/*
+tools/*
+.idea/*
+*.ipynb
+config.ini

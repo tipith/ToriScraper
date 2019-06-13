@@ -21,7 +21,13 @@ class ToriParser:
         return int(matches[0]) if matches else None
 
     def _category_parser(self, soup):
-        return soup.find('a')['title'].split(':')[1].strip()
+        if soup is not None:
+            titles = soup['title'].split(',')
+            titles = list(map(str.strip, titles))
+            city = titles[-2]
+            category = titles[-3]
+            return city, category
+        return None, None
 
     def list_factory(self, *args, **kwargs) -> ToriItemList:
         return ToriItemList(*args, **kwargs)
@@ -33,7 +39,7 @@ class ToriParser:
         discarded = re.compile(r'(prisjakt|pp_item|listing_carousel)')
         accepted = re.compile(r'^item_\d+$')
 
-        rows = soup.body.find_all('div', class_='item_row')
+        rows = soup.body.find_all('a', class_='item_row')
         items = ToriItemList('fetch')
         items_total = 0
 
@@ -54,17 +60,18 @@ class ToriParser:
                 date_processed = re.sub(r'[\n]', ' ', date_processed)
                 item = {
                     'toriid': numerals[0],
-                    'description': row.find('div', class_='desc').a.text,
+                    'description': row.find('div', class_='li-title').text,
                     'price': row.find('p', class_='list_price').text,
                     'date': date_processed,
                     'imageurl': row.find('img', class_='item_image')['src'] if has_image else None,
-                    'toriurl': row.find('div', class_='desc').a['href'].split('?')[0]
+                    'toriurl': row['href']
                 }
-
+                
+                city, category = self._category_parser(row.find('img', class_='item_image'))
                 cat_geo = row.find('div', class_='cat_geo')
-                item['location'] = cat_geo.find_all('p')[0].text.strip()
+                item['location'] = cat_geo.find_all('p')[0].text.strip() + (', ' + city) if city else ''
                 item['buy_or_sell'] = cat_geo.find_all('p')[1].text.strip()
-                item['category'] = self._category_parser(cat_geo)
+                item['category'] = category
 
                 try:
                     item['price'] = ToriParser._get_number(item['price'])
@@ -74,6 +81,8 @@ class ToriParser:
 
                     self.logger.debug('parsed:\n{}\n{}\n\n'.format('-' * 70, row.prettify()))
                 items.add(ToriItem(**item))
+            except KeyboardInterrupt as e:
+                raise e
             except:
                 self.logger.error('Unable to parse:\n{}\n{}\n\n'.format('-' * 70, row.prettify()))
                 self.logger.error('Exception:\n{}'.format(traceback.format_exc()))
@@ -91,9 +100,6 @@ class CarParser(ToriParser):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.details_supported = True
         self.topic = '/autot'
-
-    def _category_parser(self, soup):
-        return 'autot'
 
     def list_factory(self, *args, **kwargs) -> CarItemList:
         return CarItemList(*args, **kwargs)
@@ -125,7 +131,8 @@ class CarParser(ToriParser):
         det['car_engine_heater'] = det_fin.get('Lohkolämmitin', None) != '-'
         img = soup('img', class_='image_next')
         det['imageurl'] = img[0]['src'] if img else None
-        sub_topic = soup('div', class_='sub_topic')[0]('div', class_='ad_param')
+        sub = soup('div', class_='sub_subject')
+        sub_topic = sub[0]('div', class_='ad_param') if sub else None
         det['car_description_extra'] = sub_topic[0].text if sub_topic else None
         det['car_info'] = soup('div', class_='body')[0].text.strip('\n').strip()
         det['car_info'] = ' '.join([line.strip() for line in det['car_info'].split('\n')])
@@ -159,6 +166,8 @@ class ToriConsumer:
             try:
                 html = self._url_getter(item.toriurl)
                 self.parser.add_details(html, item)
+            except KeyboardInterrupt as e:
+                raise e
             except:
                 self.logger.error('failed to fetch details: {}'.format(item))
                 self.logger.error('Exception:\n{}'.format(traceback.format_exc()))
@@ -173,6 +182,8 @@ class ToriConsumer:
                 self.logger.info(
                     '{0} - {1:.1f} KB, took {2:.2g} s'.format(quoted, len(page_data) / 1000, duration_ms))
                 return page_data
+        except KeyboardInterrupt as e:
+            raise e
         except:
             self.logger.error('failed to fetch: {}'.format(quoted))
             self.logger.error('Exception:\n{}'.format(traceback.format_exc()))
